@@ -1,0 +1,108 @@
+name: PeerSync
+options:
+  createIntermediateGroups: true
+  deploymentTarget:
+    iOS: "26.0"
+
+settings:
+  base:
+    IPHONEOS_DEPLOYMENT_TARGET: "26.0"
+    TARGETED_DEVICE_FAMILY: "1,2"
+    SWIFT_VERSION: "5.0"
+    # preBuildScripts（cargo）がネットワークとリポジトリ外のキャッシュに触るため必須
+    ENABLE_USER_SCRIPT_SANDBOXING: "NO"
+
+targets:
+  PeerSync:
+    type: application
+    platform: iOS
+    sources:
+      - path: Source
+    dependencies:
+      - sdk: Security.framework
+      - sdk: SystemConfiguration.framework
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.example.peersync
+        PRODUCT_NAME: PeerSync
+        GENERATE_INFOPLIST_FILE: "NO"
+        SWIFT_OBJC_BRIDGING_HEADER: Source/Support/PeerSync-Bridging-Header.h
+        # Rust FFI（libpeersync_iroh.a）のリンク
+        LIBRARY_SEARCH_PATHS:
+          - "$(inherited)"
+          - "$(SRCROOT)/native/peersync-iroh/target/aarch64-apple-ios/release"
+        OTHER_LDFLAGS:
+          - "$(inherited)"
+          - "-lpeersync_iroh"
+    info:
+      path: Resources/Info.plist
+      properties:
+        CFBundleDisplayName: PeerSync
+        # 納品ごとにここだけ上げる（バージョンのアンカー。仕様 7）
+        CFBundleShortVersionString: "0.1.10"
+        CFBundleVersion: "1"
+        UILaunchScreen: {}
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
+        UISupportedInterfaceOrientations~ipad:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationPortraitUpsideDown
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
+        # 受信ファイル（Documents/PeerSync/）を「ファイル」アプリから見えるようにする
+        UIFileSharingEnabled: true
+        LSSupportsOpeningDocumentsInPlace: true
+        # QR 読み取り
+        NSCameraUsageDescription: ペアリング用QRコードの読み取りに使用します。
+        # audio: 「無音オーディオで延命」用（ON のときだけ再生する）
+        # processing: 取得中の BGContinuedProcessingTask（iOS 26）用
+        UIBackgroundModes:
+          - audio
+          - processing
+        # --- 取得のバックグラウンド継続（BGContinuedProcessingTask）-------------
+        # 1 ファイル = 1 タスク。識別子は完全一致でしか通らず（QSProbe で実測）、
+        # 実行時 bundle ID 配下である必要がある。SideStore がインストール時に
+        # このキーもチーム ID 込みへ書き換えるので、素の bundle ID 配下で 8 枠書く。
+        # ※ installd がキャッシュする項目。変更時はアンインストール→再起動→再インストール（仕様 6）。
+        BGTaskSchedulerPermittedIdentifiers:
+          - com.example.peersync.transfer.0
+          - com.example.peersync.transfer.1
+          - com.example.peersync.transfer.2
+          - com.example.peersync.transfer.3
+          - com.example.peersync.transfer.4
+          - com.example.peersync.transfer.5
+          - com.example.peersync.transfer.6
+          - com.example.peersync.transfer.7
+          # For LiveContainer: tasks are submitted under the host's bundle ID
+          # (com.kdt.livecontainer[.<TEAMID>].transfer.N). register() matches exact strings only,
+          # so this wildcard does NOT make register() pass by itself; the LiveContainer-bgtask fork
+          # merges the host identifiers into the guest Info.plist at install time instead.
+          # Kept as a marker only. SideStore leaves entries with a foreign prefix untouched.
+          - com.kdt.livecontainer.*
+        # 素の bundle ID（ビルド時に展開）。コードで直書きしないための置き場（QSProbe と同じ）。
+        PSDeclaredBundleIdentifier: $(PRODUCT_BUNDLE_IDENTIFIER)
+    entitlements:
+      path: PeerSync.entitlements
+      properties: {}
+    preBuildScripts:
+      - name: Build Rust (peersync-iroh)
+        shell: /bin/bash
+        basedOnDependencyAnalysis: false
+        script: |
+          set -euo pipefail
+          export PATH="$HOME/.cargo/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"
+          if ! command -v cargo >/dev/null 2>&1; then
+            echo "error: cargo が見つかりません（GitHub Actions の macOS ランナーには rustup/cargo がプリインストールされています）" >&2
+            exit 1
+          fi
+          if ! rustup target list --installed 2>/dev/null | grep -q '^aarch64-apple-ios$'; then
+            rustup target add aarch64-apple-ios
+          fi
+          cd "$SRCROOT/native/peersync-iroh"
+          # Xcode が注入する SDK/配備ターゲットの環境変数が cargo のホスト用
+          # ビルドスクリプトを壊すことがあるため、最小限の環境に絞って実行する
+          env -i HOME="$HOME" PATH="$PATH" \
+            IPHONEOS_DEPLOYMENT_TARGET="26.0" \
+            cargo build --release --target aarch64-apple-ios

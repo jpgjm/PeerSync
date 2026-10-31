@@ -1,0 +1,89 @@
+# 汎用 IPA ビルドワークフロー（プロジェクト非依存）
+#
+# 注意: こちらの手元に既存の汎用版（rev7）の現物が無かったため、本ファイルは
+# 同じ役割（XcodeGen → 未署名ビルド → ad-hoc 署名 → IPA 化）を果たす再構成版です。
+# 既存の汎用 build-ipa.yml（rev7）をお持ちの場合は、このファイルをそのまま
+# 差し替えてください（本プロジェクトはプロジェクト固有の記述をワークフローに
+# 置いていないので、差し替えても動きます。Rust のビルドは project.yml の
+# preBuildScripts 内で行うため、ワークフロー側の対応は不要です）。
+name: Build IPA
+
+on:
+  push:
+    branches: [main, master]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-26
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate Xcode project
+        run: xcodegen generate
+
+      - name: Detect project / scheme
+        id: detect
+        run: |
+          set -euo pipefail
+          PROJECT=$(ls -d *.xcodeproj | head -n1)
+          SCHEME=$(xcodebuild -list -json -project "$PROJECT" | python3 -c 'import json,sys; print(json.load(sys.stdin)["project"]["schemes"][0])')
+          echo "project=$PROJECT" >> "$GITHUB_OUTPUT"
+          echo "scheme=$SCHEME" >> "$GITHUB_OUTPUT"
+          echo "project=$PROJECT scheme=$SCHEME"
+
+      - name: Build (unsigned)
+        run: |
+          set -euo pipefail
+          xcodebuild \
+            -project "${{ steps.detect.outputs.project }}" \
+            -scheme "${{ steps.detect.outputs.scheme }}" \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            build 2>&1 | tee xcodebuild.log | grep -E --line-buffered 'error:|warning:|Build Phase|=== BUILD|\*\* BUILD' || true
+          # パイプで終了コードが消えないよう、ログの末尾で成否を判定する
+          grep -q '\*\* BUILD SUCCEEDED \*\*' xcodebuild.log || { tail -n 200 xcodebuild.log; exit 1; }
+
+      - name: Ad-hoc sign & package IPA
+        id: package
+        run: |
+          set -euo pipefail
+          APP=$(ls -d build/Build/Products/Release-iphoneos/*.app | head -n1)
+          NAME=$(basename "$APP" .app)
+          # <プロダクト名>.entitlements が ad-hoc 署名の entitlements（仕様 7）
+          ENTITLEMENTS="$NAME.entitlements"
+          if [ -f "$ENTITLEMENTS" ]; then
+            codesign --force --deep --sign - --entitlements "$ENTITLEMENTS" "$APP"
+          else
+            codesign --force --deep --sign - "$APP"
+          fi
+          mkdir -p Payload
+          cp -R "$APP" Payload/
+          VERSION=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP/Info.plist")
+          STAMP=$(TZ=Asia/Tokyo date +%Y%m%d-%H%M%S)
+          IPA="${NAME}-v${VERSION}-${STAMP}.ipa"
+          zip -qry "$IPA" Payload
+          echo "ipa=$IPA" >> "$GITHUB_OUTPUT"
+          echo "name=${NAME}-v${VERSION}-${STAMP}" >> "$GITHUB_OUTPUT"
+
+      - name: Upload IPA artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.package.outputs.name }}
+          path: ${{ steps.package.outputs.ipa }}
+
+      - name: Upload build log (on failure)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: xcodebuild-log
+          path: xcodebuild.log

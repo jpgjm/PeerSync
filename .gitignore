@@ -1,0 +1,12 @@
+# Xcode / XcodeGen（*.xcodeproj はコミットしない。XcodeGen が生成する）
+*.xcodeproj
+build/
+DerivedData/
+SourcePackages/
+*.ipa
+
+# Rust（Cargo.lock はコミットして iroh の版を固定する。target/ は生成物）
+native/peersync-iroh/target/
+
+# macOS
+.DS_Store
