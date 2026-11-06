@@ -1,0 +1,62 @@
+[versions]
+kotlin = "2.2.21"
+agp = "8.13.2"
+compose-multiplatform = "1.9.3"
+coroutines = "1.10.2"
+serialization-json = "1.9.0"
+activity-compose = "1.13.0"
+core-ktx = "1.17.0"
+lifecycle = "2.9.4"
+# Multiplatform lifecycle for shared Compose code (0.2.36: LocalLifecycleOwner / repeatOnLifecycle for the
+# Device Hub online checks). Same version Compose Multiplatform 1.9.3 already pulls in transitively.
+jetbrains-lifecycle = "2.9.6"
+iroh = "1.2.0"
+jna = "5.15.0"
+zxing-core = "3.5.3"
+# Google Code Scanner (Android QR, 0.2.38). No minCompileSdk in its AAR, so it works with compileSdk 36
+code-scanner = "16.1.0"
+qrose = "1.0.1"
+icons-extended = "1.7.3"
+# Experimental Material3 with M3 Expressive (FloatingActionButtonMenu etc.) (0.2.17).
+# In CMP 1.9.*, compose.material3 points to the stable release (~1.8.2) without the Expressive API.
+# 1.9.0-beta06 / 1.9.0 stable are based on androidx material3 1.4.0-beta+, where the
+# Expressive components were removed (checked the jar; ExperimentalMaterial3ExpressiveApi is internal too).
+# Only 1.9.0-alpha04 (based on androidx 1.4.0-alpha; JetBrains docs point to it for Expressive)
+# has FloatingActionButtonMenu / ToggleFloatingActionButton, so pin it.
+material3-experimental = "1.9.0-alpha04"
+opencv = "4.9.0-0"
+junit = "4.13.2"
+
+[libraries]
+kotlinx-coroutines-core = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-core", version.ref = "coroutines" }
+kotlinx-coroutines-android = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-android", version.ref = "coroutines" }
+kotlinx-coroutines-swing = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-swing", version.ref = "coroutines" }
+kotlinx-coroutines-test = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-test", version.ref = "coroutines" }
+kotlinx-serialization-json = { module = "org.jetbrains.kotlinx:kotlinx-serialization-json", version.ref = "serialization-json" }
+androidx-activity-compose = { module = "androidx.activity:activity-compose", version.ref = "activity-compose" }
+androidx-core-ktx = { module = "androidx.core:core-ktx", version.ref = "core-ktx" }
+androidx-lifecycle-runtime-compose = { module = "androidx.lifecycle:lifecycle-runtime-compose", version.ref = "lifecycle" }
+jetbrains-lifecycle-runtime-compose = { module = "org.jetbrains.androidx.lifecycle:lifecycle-runtime-compose", version.ref = "jetbrains-lifecycle" }
+androidx-lifecycle-runtime-ktx = { module = "androidx.lifecycle:lifecycle-runtime-ktx", version.ref = "lifecycle" }
+iroh-jvm = { module = "computer.iroh:iroh", version.ref = "iroh" }
+jna = { module = "net.java.dev.jna:jna", version.ref = "jna" }
+# Windows registry API (Advapi32Util, 0.2.29; Shell32Util unused since 0.2.31). Keep the same version as jna
+jna-platform = { module = "net.java.dev.jna:jna-platform", version.ref = "jna" }
+iroh-android = { module = "computer.iroh:iroh-android", version.ref = "iroh" }
+zxing-core = { module = "com.google.zxing:core", version.ref = "zxing-core" }
+play-services-code-scanner = { module = "com.google.android.gms:play-services-code-scanner", version.ref = "code-scanner" }
+qrose = { module = "io.github.alexzhirkevich:qrose", version.ref = "qrose" }
+compose-icons-extended = { module = "org.jetbrains.compose.material:material-icons-extended", version.ref = "icons-extended" }
+compose-material3-experimental = { module = "org.jetbrains.compose.material3:material3", version.ref = "material3-experimental" }
+opencv = { module = "org.openpnp:opencv", version.ref = "opencv" }
+junit = { module = "junit:junit", version.ref = "junit" }
+
+[plugins]
+kotlin-multiplatform = { id = "org.jetbrains.kotlin.multiplatform", version.ref = "kotlin" }
+kotlin-android = { id = "org.jetbrains.kotlin.android", version.ref = "kotlin" }
+kotlin-jvm = { id = "org.jetbrains.kotlin.jvm", version.ref = "kotlin" }
+kotlin-compose = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }
+kotlin-serialization = { id = "org.jetbrains.kotlin.plugin.serialization", version.ref = "kotlin" }
+android-application = { id = "com.android.application", version.ref = "agp" }
+android-library = { id = "com.android.library", version.ref = "agp" }
+compose-multiplatform = { id = "org.jetbrains.compose", version.ref = "compose-multiplatform" }

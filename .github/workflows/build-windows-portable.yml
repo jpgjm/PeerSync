@@ -1,0 +1,77 @@
+# Builds the Windows portable version (app image with bundled JRE).
+# jpackage can't cross-build, so this runs on a Windows runner.
+# Uses JDK 21 because computer.iroh:iroh (JVM) requires JVM 21+.
+#
+# About WiX (workaround for GitHub 504):
+#   On Windows, the Compose Gradle plugin (1.9.3) downloads WiX Toolset from GitHub by default
+#   (:downloadWix). In 0.2.8 CI this download failed with 504.
+#   The portable version (AppImage) doesn't use WiX, but the plugin always reads wixToolsetDir,
+#   even for AppImage, so compose.desktop.application.downloadWix=false alone fails with
+#   "property 'wixToolsetDir' has no value" (0.2.9 CI).
+#   If the WIX_PATH env variable is set, the plugin uses that directory as is (just adds it to PATH)
+#   and skips the download, so we point WIX_PATH at an empty directory.
+#   Note: to build MSI/EXE, set this to a real WiX (bin) path.
+# On failure, uploads the Gradle logs as an artifact.
+name: Build Windows portable
+
+on:
+  push:
+    branches: [main, master]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      # Dummy directory to stop the Compose plugin's WiX download (unused for AppImage).
+      # The plugin checks at configuration time that WIX_PATH is a directory, so create it first
+      # and pass it to later steps via $GITHUB_ENV (the runner context isn't available in job-level env).
+      - name: Prepare WIX_PATH stub directory
+        shell: pwsh
+        run: |
+          $wix = Join-Path $env:RUNNER_TEMP "wix-stub"
+          New-Item -ItemType Directory -Force -Path $wix | Out-Null
+          "WIX_PATH=$wix" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          Write-Host "WIX_PATH=$wix"
+
+      - name: Build portable app image (jpackage)
+        shell: bash
+        run: |
+          set -euo pipefail
+          set -o pipefail
+          ./gradlew.bat :desktopApp:createDistributable --no-daemon 2>&1 | tee gradle-windows.log
+
+      - name: Name artifact
+        id: meta
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Name and version come from gradle.properties (0.2.30)
+          APP=$(grep -E '^peersync.appName=' gradle.properties | head -n1 | cut -d= -f2- | tr -d '\r')
+          VERSION=$(grep -E '^peersync.version=' gradle.properties | head -n1 | cut -d= -f2- | tr -d '\r')
+          STAMP=$(TZ=Asia/Tokyo date +%Y%m%d-%H%M%S)
+          echo "name=${APP}_Windows-v${VERSION}-${STAMP}" >> "$GITHUB_OUTPUT"
+
+      # The artifact zip contains PeerSync/ (the full app image folder) at the top level.
+      # Extract it and run PeerSync\PeerSync.exe (--tray starts it in the system tray).
+      - name: Upload app image artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.meta.outputs.name }}
+          path: desktopApp/build/compose/binaries/main/app
+
+      - name: Upload build log (on failure)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gradle-windows-log
+          path: gradle-windows.log
+          if-no-files-found: ignore

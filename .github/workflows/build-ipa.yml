@@ -1,0 +1,88 @@
+# Generic IPA build workflow (project-independent)
+#
+# Note: the existing generic version (rev7) wasn't available here, so this file is a
+# reconstruction that does the same job (XcodeGen -> unsigned build -> ad-hoc signing -> IPA).
+# If you have the existing generic build-ipa.yml (rev7), just replace this file with it
+# (this project keeps nothing project-specific in the workflow, so it still works.
+# Rust is built in project.yml's preBuildScripts, so the workflow needs no changes).
+name: Build IPA
+
+on:
+  push:
+    branches: [main, master]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-26
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate Xcode project
+        run: xcodegen generate
+
+      - name: Detect project / scheme
+        id: detect
+        run: |
+          set -euo pipefail
+          PROJECT=$(ls -d *.xcodeproj | head -n1)
+          SCHEME=$(xcodebuild -list -json -project "$PROJECT" | python3 -c 'import json,sys; print(json.load(sys.stdin)["project"]["schemes"][0])')
+          echo "project=$PROJECT" >> "$GITHUB_OUTPUT"
+          echo "scheme=$SCHEME" >> "$GITHUB_OUTPUT"
+          echo "project=$PROJECT scheme=$SCHEME"
+
+      - name: Build (unsigned)
+        run: |
+          set -euo pipefail
+          xcodebuild \
+            -project "${{ steps.detect.outputs.project }}" \
+            -scheme "${{ steps.detect.outputs.scheme }}" \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            build 2>&1 | tee xcodebuild.log | grep -E --line-buffered 'error:|warning:|Build Phase|=== BUILD|\*\* BUILD' || true
+          # The pipe loses the exit code, so judge success from the end of the log
+          grep -q '\*\* BUILD SUCCEEDED \*\*' xcodebuild.log || { tail -n 200 xcodebuild.log; exit 1; }
+
+      - name: Ad-hoc sign & package IPA
+        id: package
+        run: |
+          set -euo pipefail
+          APP=$(ls -d build/Build/Products/Release-iphoneos/*.app | head -n1)
+          NAME=$(basename "$APP" .app)
+          # <ProductName>.entitlements are the entitlements for ad-hoc signing (spec 7)
+          ENTITLEMENTS="$NAME.entitlements"
+          if [ -f "$ENTITLEMENTS" ]; then
+            codesign --force --deep --sign - --entitlements "$ENTITLEMENTS" "$APP"
+          else
+            codesign --force --deep --sign - "$APP"
+          fi
+          mkdir -p Payload
+          cp -R "$APP" Payload/
+          VERSION=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP/Info.plist")
+          STAMP=$(TZ=Asia/Tokyo date +%Y%m%d-%H%M%S)
+          IPA="${NAME}-v${VERSION}-${STAMP}.ipa"
+          zip -qry "$IPA" Payload
+          echo "ipa=$IPA" >> "$GITHUB_OUTPUT"
+          echo "name=${NAME}-v${VERSION}-${STAMP}" >> "$GITHUB_OUTPUT"
+
+      - name: Upload IPA artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.package.outputs.name }}
+          path: ${{ steps.package.outputs.ipa }}
+
+      - name: Upload build log (on failure)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: xcodebuild-log
+          path: xcodebuild.log

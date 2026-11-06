@@ -1,0 +1,52 @@
+# Builds the Android APK. On failure, uploads the Gradle logs as an artifact.
+name: Build APK
+
+on:
+  push:
+    branches: [main, master]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Build APK (release, debug-signed)
+        shell: bash
+        run: |
+          set -euo pipefail
+          /bin/sh ./gradlew :androidApp:assembleRelease --no-daemon 2>&1 | tee gradle-apk.log
+
+      - name: Name APK
+        id: meta
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Name and version come from gradle.properties (0.2.30)
+          APP=$(grep -E '^peersync.appName=' gradle.properties | head -n1 | cut -d= -f2- | tr -d '\r')
+          VERSION=$(grep -E '^peersync.version=' gradle.properties | head -n1 | cut -d= -f2- | tr -d '\r')
+          STAMP=$(TZ=Asia/Tokyo date +%Y%m%d-%H%M%S)
+          NAME="${APP}-v${VERSION}-${STAMP}"
+          cp androidApp/build/outputs/apk/release/androidApp-release.apk "${NAME}.apk"
+          echo "name=${NAME}" >> "$GITHUB_OUTPUT"
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.meta.outputs.name }}-apk
+          path: ${{ steps.meta.outputs.name }}.apk
+
+      - name: Upload build log (on failure)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gradle-apk-log
+          path: gradle-apk.log
+          if-no-files-found: ignore

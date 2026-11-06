@@ -1,0 +1,17 @@
+*.iml
+.gradle/
+build/
+/captures
+.externalNativeBuild/
+.cxx/
+local.properties
+.idea/
+.kotlin/
+.DS_Store
+
+# XcodeGen output (regenerated from project.yml)
+*.xcodeproj
+PeerSync.entitlements
+
+# Rust
+native/peersync-iroh/target/

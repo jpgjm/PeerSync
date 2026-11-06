@@ -1,0 +1,135 @@
+name: PeerSync
+options:
+  createIntermediateGroups: true
+  deploymentTarget:
+    iOS: "26.0"
+
+settings:
+  base:
+    IPHONEOS_DEPLOYMENT_TARGET: "26.0"
+    TARGETED_DEVICE_FAMILY: "1,2"
+    SWIFT_VERSION: "5.0"
+    # Required because preBuildScripts (cargo / gradle) touch the network and caches outside the repo
+    ENABLE_USER_SCRIPT_SANDBOXING: "NO"
+
+targets:
+  PeerSync:
+    type: application
+    platform: iOS
+    sources:
+      - path: iosApp/Source
+    dependencies:
+      - sdk: Security.framework
+      - sdk: SystemConfiguration.framework
+      # Kotlin Multiplatform shared code (Compose UI, protocol, iroh FFI wrapper).
+      # Built by the gradle preBuildScript and placed at the path below (static framework).
+      - framework: shared/build/bin/iosArm64/releaseFramework/PeerSyncShared.framework
+        embed: false
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.example.peersync
+        PRODUCT_NAME: PeerSync
+        GENERATE_INFOPLIST_FILE: "NO"
+        SWIFT_OBJC_BRIDGING_HEADER: iosApp/Source/Support/PeerSync-Bridging-Header.h
+        # Link the Rust FFI (libpeersync_iroh.a), the implementation Kotlin's cinterop refers to
+        LIBRARY_SEARCH_PATHS:
+          - "$(inherited)"
+          - "$(SRCROOT)/native/peersync-iroh/target/aarch64-apple-ios/release"
+        FRAMEWORK_SEARCH_PATHS:
+          - "$(inherited)"
+          - "$(SRCROOT)/shared/build/bin/iosArm64/releaseFramework"
+        OTHER_LDFLAGS:
+          - "$(inherited)"
+          - "-lpeersync_iroh"
+    info:
+      path: iosApp/Resources/Info.plist
+      properties:
+        # Display name comes from PRODUCT_NAME (0.2.30: no longer hard-coded; still expands to PeerSync)
+        CFBundleDisplayName: $(PRODUCT_NAME)
+        # Bump only this on each delivery (the version anchor; spec 7)
+        CFBundleShortVersionString: "0.2.38"
+        CFBundleVersion: "1"
+        UILaunchScreen: {}
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
+        UISupportedInterfaceOrientations~ipad:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationPortraitUpsideDown
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
+        # Required key for Compose Multiplatform iOS (allows 120Hz rendering).
+        # Without it, androidx.compose.ui.uikit.PlistSanityCheck throws right after
+        # launch and the app crashes (the cause of the 0.2.2 crash).
+        CADisableMinimumFrameDurationOnPhone: true
+        # Make received files (Documents/PeerSync/) visible in the Files app
+        UIFileSharingEnabled: true
+        LSSupportsOpeningDocumentsInPlace: true
+        # QR scanning
+        NSCameraUsageDescription: PeerSync uses the camera to scan QR codes for pairing.
+        # Photos and videos for "Send" (PHAssetResource extracts the original files; needed for Live Photo paired videos)
+        NSPhotoLibraryUsageDescription: PeerSync uses your photo library to send the photos and videos you choose as their original files.
+        # audio: for "Keep alive with silent audio" (plays only when it is on)
+        # processing: for BGContinuedProcessingTask during downloads (iOS 26)
+        UIBackgroundModes:
+          - audio
+          - processing
+        # --- Continuing downloads in the background (BGContinuedProcessingTask) ---
+        # One file = one task. Identifiers only work on an exact match (measured with QSProbe)
+        # and must be under the runtime bundle ID. SideStore rewrites this key to include
+        # the team ID at install time, so list 8 slots under the plain bundle ID.
+        # Note: installd caches this. After changing it, uninstall, reboot, then reinstall (spec 6).
+        # 0.2.30: bundle ID is expanded from build settings (same mechanism as PSDeclaredBundleIdentifier; the expanded value is unchanged)
+        BGTaskSchedulerPermittedIdentifiers:
+          - $(PRODUCT_BUNDLE_IDENTIFIER).transfer.0
+          - $(PRODUCT_BUNDLE_IDENTIFIER).transfer.1
+          - $(PRODUCT_BUNDLE_IDENTIFIER).transfer.2
+          - $(PRODUCT_BUNDLE_IDENTIFIER).transfer.3
+          - $(PRODUCT_BUNDLE_IDENTIFIER).transfer.4
+          - $(PRODUCT_BUNDLE_IDENTIFIER).transfer.5
+          - $(PRODUCT_BUNDLE_IDENTIFIER).transfer.6
+          - $(PRODUCT_BUNDLE_IDENTIFIER).transfer.7
+          # LiveContainer: tasks are submitted under the host's bundle ID
+          # (com.kdt.livecontainer[.<TEAMID>].transfer.N). The LiveContainer-bgtask fork merges the
+          # host identifiers into the guest Info.plist at install time (0.2.31: the
+          # com.kdt.livecontainer.* wildcard was removed; it never matched the guest bundle ID).
+        # Plain bundle ID (expanded at build time), so code doesn't hard-code it (same as QSProbe).
+        PSDeclaredBundleIdentifier: $(PRODUCT_BUNDLE_IDENTIFIER)
+    entitlements:
+      path: PeerSync.entitlements
+      properties: {}
+    preBuildScripts:
+      - name: Build Rust (peersync-iroh)
+        shell: /bin/bash
+        basedOnDependencyAnalysis: false
+        script: |
+          set -euo pipefail
+          export PATH="$HOME/.cargo/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"
+          if ! command -v cargo >/dev/null 2>&1; then
+            echo "error: cargo not found (GitHub Actions macOS runners come with rustup/cargo preinstalled)" >&2
+            exit 1
+          fi
+          if ! rustup target list --installed 2>/dev/null | grep -q '^aarch64-apple-ios$'; then
+            rustup target add aarch64-apple-ios
+          fi
+          cd "$SRCROOT/native/peersync-iroh"
+          # Xcode's injected SDK/deployment-target environment variables can break
+          # cargo's host build scripts, so run with a minimal environment
+          env -i HOME="$HOME" PATH="$PATH" \
+            IPHONEOS_DEPLOYMENT_TARGET="26.0" \
+            cargo build --release --target aarch64-apple-ios
+      - name: Build Kotlin framework (PeerSyncShared)
+        shell: /bin/bash
+        basedOnDependencyAnalysis: false
+        script: |
+          set -euo pipefail
+          cd "$SRCROOT"
+          export JAVA_HOME="${JAVA_HOME:-$(/usr/libexec/java_home)}"
+          # Unzipping or committing from Windows can drop gradlew's execute bit
+          # ("./gradlew: Permission denied" in the first v0.2.0 CI run). Calling it via /bin/sh
+          # doesn't depend on the execute bit (0.2.31: removed the chmod +x line).
+          # Use a minimal environment so Xcode's injected variables don't interfere with Gradle/Kotlin host tasks.
+          # (With SDKROOT set, javac and other non-Kotlin/Native tools look at the iphoneos SDK.)
+          env -i HOME="$HOME" PATH="$PATH" JAVA_HOME="$JAVA_HOME" \
+            /bin/sh ./gradlew :shared:linkReleaseFrameworkIosArm64 --no-daemon

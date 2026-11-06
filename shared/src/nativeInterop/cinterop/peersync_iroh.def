@@ -1,0 +1,5 @@
+headers = peersync_iroh.h
+headerFilter = peersync_iroh.h
+package = peersync.iroh
+# libpeersync_iroh.a is linked on the Xcode side (OTHER_LDFLAGS in project.yml).
+# shared is a static framework, so only the declarations are imported here.

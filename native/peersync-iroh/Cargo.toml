@@ -1,0 +1,37 @@
+[package]
+name = "peersync-iroh"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "Minimal iroh FFI shim for PeerSync (iOS). Exposes a C ABI called from Swift."
+license = "MIT OR Apache-2.0"
+
+[lib]
+name = "peersync_iroh"
+# On iOS, build the static library libpeersync_iroh.a and link it into the app
+crate-type = ["staticlib"]
+
+[dependencies]
+# Use iroh 1.x so the relay/handshake wire protocol matches the Android app
+# (computer.iroh:iroh-android 1.2.0 = iroh core 1.2.0) and the Windows app
+# (native/peersync-iroh). The resolved version is pinned in Cargo.lock.
+iroh = "1"
+tokio = { version = "1", features = ["rt-multi-thread", "sync", "time", "net", "macros"] }
+getrandom = "0.2"
+
+[profile.release]
+opt-level = 3
+# Unwind on panic so it can be caught at the FFI boundary
+panic = "unwind"
+
+# iOS build fix (v0.1.1): iroh -> netwatch -> netdev 0.46.x references the macOS-only
+# `libc::in6_ifreq` on iOS too and fails to compile (still unfixed in the latest 0.47.0,
+# and netwatch requires ^0.46, so a version bump can't avoid it). A copy with only the darwin
+# code fixed lives in native/vendor/netdev and replaces netdev from crates.io.
+# The only diff is the "[PeerSync patch]" part of src/os/darwin/ipv6_addr_flags.rs.
+# Likewise, netwatch 0.19.3 takes <net/route.h> constants (RTM_* / RTAX_* etc.) from libc,
+# which doesn't define them on iOS, so it fails. Replaced by a copy that defines them locally
+# (the only diffs are the added src/route_consts.rs and the "[PeerSync patch]" reference changes).
+[patch.crates-io]
+netdev = { path = "../vendor/netdev" }
+netwatch = { path = "../vendor/netwatch" }
